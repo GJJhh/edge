@@ -781,7 +781,44 @@ void wrap(Mat &src, Mat &dst) {
 
 }
 
+double convert2realdistance(int d)
+{
+	int c = static_cast<int>(d / 30);
+	int lower = 0, up = 0;
+	double real_distance = 0;
+	switch (c)
+	{
+	case 0:
+		lower = 35;
+		up = 60;
+		break;
+	case 1:
+		lower = 22.6;
+		up = 35;
+		break;
+	case 2:
+		lower = 15.5;
+		up =22.6;
+		break;
+	case 4:
+		lower = 10;
+		up = 15.5;
+		break;
+	case 5:
+		lower = 5.2;
+		up = 15.5;
+		break;
+	case 6:
+		lower = 0;
+		up = 5.2;
+		break;
+	default:
+		break;
+	}
+	real_distance = lower + (up - lower)*(d - c * 30) / 30.0;
 
+	return real_distance;
+}
 
 void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 {
@@ -829,7 +866,7 @@ void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 
 		contour = contours[downbox];
 		boundRect = boundingRect(Mat(contour));
-		extractSide(fcrop, sideground, contour, 0);
+		
 	}
 
 
@@ -837,13 +874,17 @@ void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 	//follow edge
 
 	if (contour.size() == 0 || boundRect.area() < labelground.cols) {
-		info.data.distance = height;
+		info.data.distance = 60;
 		info.data.orientation = 0;
 		info.data.angle = 0;
 	}
 	else
 	{
-		info.data.distance = height - boundRect.y - boundRect.height;
+		info.data.distance = convert2realdistance(boundRect.y + boundRect.height);
+		if (info.data.distance ==0 && cv::sum(fcrop(cv::Rect(0, height - 1, _Rightwheel_topoutside - _Leftwheel_topoutside, 1)) / 255)[0] > 0)
+		{
+			info.data.distance = 1;
+		}
 		info.data.orientation = caldownlocal(fcrop, boundRect);
 		if (boundRect.br().x < width / 2)
 			orie = 1;
@@ -862,6 +903,7 @@ void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 				info.data.angle = pi / -2;
 		}
 		else {
+			extractSide(fcrop, sideground, contour, 0);
 			findLines(sideground, filterlines);
 			caledgeang(filterlines, ang, 1, 0);
 			if (orie == 0)
@@ -871,7 +913,11 @@ void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 		}
 	}
 
-
+	cout << "detect_boundary.distance:" << info.data.distance << endl;
+	cout << "detect_boundary.orientation:" << info.data.orientation << endl;
+	cout << "detect_boundary.angle:" << info.data.angle << endl;
+	cv::imshow("test", wrap_img);
+	cv::waitKey(0);
 }
 
 
@@ -908,21 +954,31 @@ int main(int argc,char *argv[])
 	zmq::socket_t publisher(ctx, zmq::socket_type::pub);
 	publisher.bind(zmqip);
 	Mat src;
-	//" net "
-	compute_info(src,detect_boundary);
 
-	zmq::message_t message;
-	string topic = "detect_boundary";
+	string f = "undistort/";
 
-	zmq::message_t message_topic(topic.data(), topic.size());
+	//加载图片
+	for (int i = 1; i <= 300; i = i + 2) {
 
-	publisher.send(message_topic, zmq::send_flags::sndmore);
+		string p = f + to_string(i) + ".jpg";
 
-	zmq::message_t message_buffer(sizeof(detect_boundary.buffer));
+		src = imread(p, CV_LOAD_IMAGE_COLOR);
 
-	memcpy(message_buffer.data(), detect_boundary.buffer, sizeof(detect_boundary.buffer));
+		compute_info(src, detect_boundary);
 
-	publisher.send(message_buffer, zmq::send_flags::none);
+		zmq::message_t message;
+		string topic = "detect_boundary";
+
+		zmq::message_t message_topic(topic.data(), topic.size());
+
+		publisher.send(message_topic, zmq::send_flags::sndmore);
+
+		zmq::message_t message_buffer(sizeof(detect_boundary.buffer));
+
+		memcpy(message_buffer.data(), detect_boundary.buffer, sizeof(detect_boundary.buffer));
+
+		publisher.send(message_buffer, zmq::send_flags::none);
+	}
 	return 0;
 }
 
