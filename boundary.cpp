@@ -815,7 +815,7 @@ double convert2realdistance(int d)
 	default:
 		break;
 	}
-	real_distance = lower + (up - lower)*(d - c * 30) / 30.0;
+	real_distance = up- (up - lower)*(d - c * 30) / 30.0;
 
 	return real_distance;
 }
