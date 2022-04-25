@@ -16,6 +16,7 @@ using namespace cv;
 using namespace std;
 
 typedef unsigned char BYTE;
+#pragma pack(1)
 union Vision_detect_boundary
 {
 	struct {
@@ -23,18 +24,37 @@ union Vision_detect_boundary
 		int orientation;
 		double angle;
 	}data;
-	char buffer[sizeof(data) + 1 ];
+	char buffer[sizeof(data)];
 };
 
 union Vision_edge_extraction
 {
 	struct {
-		double edge_k;
-		double edge_b;
+		double angle;
+		double distance;
+		int isside; //0 all grass ,1 side ,2 no grass
 	}data;
-	char buffer[sizeof(data) + 1];
+	char buffer[sizeof(data)];
 };
+union Vision_inside
+{
+	struct {
+		int area_ratio;
 
+	}data;
+	char buffer[sizeof(data)];
+};
+struct EdgeState
+{
+	float lastang;
+	int lastside;
+	int nosidecount;
+	int side_advise;
+
+};
+#pragma pack(0)
+
+struct EdgeState state = { 0,-1,10,0 };
 #define pi 3.1415926
 #define _T 0.00000001
 #define _Max 10000
@@ -240,7 +260,7 @@ void extractbox(const Mat &back,vector<vector<Point>> &contours,int &downbox,int
 	 boxs[i].points(rect); 
 	 //rectangle(back, Point(boundRects[i].x, boundRects[i].y), Point(boundRects[i].x + boundRects[i].width, boundRects[i].y + boundRects[i].height), Scalar(0, 255, 0), 2, 8);
 	
-	if(boundRects[i].height<rows/10 || boundRects[i].area()<rows*3 )//|| boundRects[i].height+boundRects[i].y==rows)
+	if(boundRects[i].height<rows/10 || boundRects[i].area()<rows*2 )//|| boundRects[i].height+boundRects[i].y==rows)
 		continue;
 	 
 	//cv::Rect bottomRoi=cv::Rect(boundRect[i].x,boundRect[i].height-6,boundRect[i].width,5);
@@ -261,20 +281,21 @@ void extractbox(const Mat &back,vector<vector<Point>> &contours,int &downbox,int
 	;
 }
 
-void extractSide(const Mat &back, Mat &side, vector<Point>&contour, int orie) {
+void extractSide(const Mat &back, Mat &side, vector<Point>&contour, int orie, int noside) {
 
 	int rows = back.rows;
 	int cols = back.cols;
-
+	int maxy = _Min;
 	double base_k = 0;
+	int filterSide_count = 0;
 	cv::Rect boundRect = boundingRect(Mat(contour));
 
 	if (orie != 0)
 		base_k = 1.0* back.rows / (back.cols - 15);
 	vector<Point>::iterator p;
-	
 
-	for (p = contour.begin(); p != contour.end() ;)
+
+	for (p = contour.begin(); p != contour.end();)
 
 	{
 
@@ -282,19 +303,24 @@ void extractSide(const Mat &back, Mat &side, vector<Point>&contour, int orie) {
 			p = contour.erase(p);
 			continue;
 		}
-		
-		if (orie == 1) {
-			double k = (rows - (*p).y) / ((*p).x - 13 + _T);
 
-			if (k <= base_k * 1.1 || k <= 0) {
+		if (orie == 1) {
+			double k = (rows - (*p).y) / ((*p).x - 15 + _T);
+
+			if (k <= base_k * 1.1&&k > 0) {
+				maxy = max(maxy, (*p).y);
 				p = contour.erase(p);
+
+				filterSide_count++;
 				continue;
 			}
 		}
 		if (orie == 2) {
-			double k = (rows - (*p).y) / (cols - (*p).x - 13 + _T);
-			if (k <= base_k * 1.1 || k <= 0) {
+			double k = (rows - (*p).y) / (cols - (*p).x - 14 + _T);
+			if (k <= base_k * 1.1&&k > 0) {
+				maxy = max(maxy, (*p).y);
 				p = contour.erase(p);
+				filterSide_count++;
 				continue;
 			}
 		}
@@ -302,13 +328,78 @@ void extractSide(const Mat &back, Mat &side, vector<Point>&contour, int orie) {
 
 	}
 
+	
+	//if (maxy > rows / 2) {
+	//	for (p = contour.begin(); p != contour.end();)
+	//	{
+	//		if ((*p).y >= maxy - maxy / 10)
+	//			p = contour.erase(p);
+	//		else
+	//			p++;
+	//	}
+	//}
+	if (orie != 0) {
+		vector<vector<Point>>contours;
+		vector<Point> temp;
+		int empty = 0;
+		int d = 0;
+		int index = 0;
+		for (int i = 0; i < rows; i++)
+		{
+			int flag = 0;
+			for (p = contour.begin(); p != contour.end();)
+			{
+				if ((*p).y == i) {
+					if (empty > 10) {
+						if (temp.size() > 10) {
+							contours.push_back(temp);
+						}
+						temp.clear();
+						empty = 0;
+						
+						if (d > rows / 3)
+							index = contours.size() - 1;
+						d = 0;
+					}
+					temp.emplace_back((*p));
+					p = contour.erase(p);
+
+					flag++;
+				}
+				else
+					p++;
+			}
+			if (flag == 0)
+				empty++;
+			else
+				d++;
+			if (i == rows - 1) {
+				if (temp.size() > 10) {
+					contours.push_back(temp);
+					temp.clear();
+				}
+				
+				if (d > rows / 3)
+					index = contours.size() - 1;
+				d = 0;
+			}
+		}
+		contour.clear();
+		if(contours.size()!=0)
+			contour = contours[index];
+	}
+	if (filterSide_count > rows / 4)
+		noside = 0;
+	else
+		noside = 1;
 
 	for (int i = 0; i < contour.size(); i++)
 	{
 
 		side.at<uchar>(contour[i].y, contour[i].x) = 255;
 	}
-
+	/*cv::imshow("side", side);
+	cv:; waitKey(0);*/
 }
 void extractBackGround(Mat &dst,Mat & back){
 	cv::Mat labels;
@@ -523,15 +614,6 @@ void findLines(Mat back, vector<Vec4i> &filterlines)
 
 
 
-		/*if (q_idx == 2) {
-			int q_idx2 = abs(q_idx - 2);
-
-			(*q)[q_idx2] = (*q)[q_idx];
-			(*q)[q_idx2 + 1] = (*q)[q_idx + 1];
-			(*q)[q_idx] = tempx;
-			(*q)[q_idx + 1] = tempy;
-			q_idx = q_idx2;
-		}*/
 		if (d > 10) {
 
 			filterlines.insert(q, Vec4i((*p)[p_idx], (*p)[p_idx + 1], (*q)[q_idx], (*q)[q_idx + 1]));
@@ -627,7 +709,8 @@ void caledgeang(vector<Vec4i> &filterlines, float &ang, int mode, int orie) {
 	int downmaxindex = -1;
 	int dowmmax = _Min;
 	//1 follow edge 0:random
-	int min_l = 0, max_r = 0;
+	int min_l = 0, max_r = 0,max_d=0,min_t=0;
+	cout << orie << endl;
 	if (mode) {
 		vector<Vec4i>::iterator p;
 		for (p = filterlines.begin(); p != filterlines.end();)
@@ -642,85 +725,214 @@ void caledgeang(vector<Vec4i> &filterlines, float &ang, int mode, int orie) {
 			}
 
 		}
-	}
+	
 
-	for (int i = 0; i < filterlines.size(); i++) {
-		if (dowmmax == max(filterlines[i][1], filterlines[i][3]))
-		{
+		for (int i = 0; i < filterlines.size(); i++) {
+		
+			if (dowmmax == max(filterlines[i][1], filterlines[i][3]))
+			{
 
-			float kp = (-filterlines[i][2] + filterlines[i][0]) / (filterlines[i][3] - filterlines[i][1] + _T);
-			float kq = (-filterlines[downmaxindex][2] + filterlines[downmaxindex][0]) / (filterlines[downmaxindex][3] - filterlines[downmaxindex][1] + _T);
-			if (kp*kq > 0 && abs(kp) > abs(kq)) {
+				float kp = (-filterlines[i][2] + filterlines[i][0]) / (filterlines[i][3] - filterlines[i][1] + _T);
+				float kq = (-filterlines[downmaxindex][2] + filterlines[downmaxindex][0]) / (filterlines[downmaxindex][3] - filterlines[downmaxindex][1] + _T);
+				if (kp*kq > 0 && abs(kp) > abs(kq)) {
+					dowmmax = max(filterlines[i][1], filterlines[i][3]);
+					downmaxindex = i;
+				}
+			}
+			else if (dowmmax < max(filterlines[i][1], filterlines[i][3]))
+			{
+
 				dowmmax = max(filterlines[i][1], filterlines[i][3]);
 				downmaxindex = i;
+
+			}
+			min_l = min(min_l,min(filterlines[i][0], filterlines[i][2]));
+			max_r = max(max_r,max(filterlines[i][0], filterlines[i][2]));
+			//min_t = min(min_t,min(filterlines[i][1], filterlines[i][3]));
+			//max_d = max(max_d,max(filterlines[i][1], filterlines[i][3]));
+		}
+		if (downmaxindex == -1) {
+			if (orie == 1)
+				ang = pi / 2;
+			else if (orie == 2)
+				ang = -1 * pi / 2;
+			else
+				ang = 0;
+			return;
+		}
+	
+
+
+		float initK = (-filterlines[downmaxindex][2] + filterlines[downmaxindex][0]) / (filterlines[downmaxindex][3] - filterlines[downmaxindex][1] + _T);
+		float init_angle = atan(initK);
+		float len = sqrtf(pow((filterlines[downmaxindex][3] - filterlines[downmaxindex][1]), 2) + pow((filterlines[downmaxindex][2] - filterlines[downmaxindex][0]), 2));
+		ang = init_angle;
+
+		for (int i = downmaxindex + 1; i < filterlines.size(); i++) {
+
+			if (max(filterlines[i][1], filterlines[i][3]) == max(filterlines[downmaxindex][1], filterlines[downmaxindex][3]))
+				continue;
+			float K = (-filterlines[i][2] + filterlines[i][0]) / (filterlines[i][3] - filterlines[i][1] + _T);
+			float angle_i = atan(K);
+			float d_i = sqrtf(pow((filterlines[i][3] - filterlines[i][1]), 2) + pow((filterlines[i][2] - filterlines[i][0]), 2));
+			if (abs(angle_i - init_angle) > pi / 4 )
+			{
+
+				continue;
+			}
+
+			else {
+				len += d_i;
+				ang = ang * (1 - d_i / len) + angle_i * d_i / len;
+			}
+			
+			if (min(filterlines[i][0], filterlines[i][2]) == min_l)
+					break;
+
+			if (max(filterlines[i][0], filterlines[i][2]) == max_r)
+					break;
+			
+			/*else
+			{
+				if (min(filterlines[i][1], filterlines[i][3]) == min_t)
+					break;
+
+				if (max(filterlines[i][1], filterlines[i][3]) == max_d)
+					break;
+			}*/
+
+		}
+		if (downmaxindex >= 1)
+			return;
+		for (int i = downmaxindex - 1; i >= 0; i--) {
+
+			if (max(filterlines[i][1], filterlines[i][3]) == max(filterlines[downmaxindex][1], filterlines[downmaxindex][3]))
+				continue;
+			float K = (-filterlines[i][2] + filterlines[i][0]) / (filterlines[i][3] - filterlines[i][1] + _T);
+			float angle_i = atan(K);
+			float d_i = sqrtf(pow((filterlines[i][3] - filterlines[i][1]), 2) + pow((filterlines[i][2] - filterlines[i][0]), 2));
+			if (abs(angle_i - init_angle) > pi / 4)
+				continue;
+			else {
+				len += d_i;
+				ang = ang * (1 - d_i / len) + angle_i * d_i / len;
+			}
+			
+			if (min(filterlines[i][0], filterlines[i][2]) == min_l)
+				break;
+
+			if (max(filterlines[i][0], filterlines[i][2]) == max_r)
+				break;
+			
+			/*else
+			{
+				if (min(filterlines[i][1], filterlines[i][3]) == min_t)
+					break;
+
+				if (max(filterlines[i][1], filterlines[i][3]) == max_d)
+					break;
+			}*/
+
+		}
+	}
+	else
+	{
+		std::vector<std::pair<float, float>> k_list;
+		if (filterlines.size() > 1) {
+			for (int i = 0; i < filterlines.size() - 1; ) {
+				float ki = (-filterlines[i][2] + filterlines[i][0]) / (filterlines[i][3] - filterlines[i][1] + _T);
+				float d_i = sqrtf(pow((filterlines[i][3] - filterlines[i][1]), 2) + pow((filterlines[i][2] - filterlines[i][0]), 2));
+				float angi = atan(ki);
+				//cout << "angi::" << angi * 180 / pi << endl;
+				for (int j = i + 1; j < filterlines.size(); j++) {
+					float kj = (-filterlines[j][2] + filterlines[j][0]) / (filterlines[j][3] - filterlines[j][1] + _T);
+					float d_j = sqrtf(pow((filterlines[j][3] - filterlines[j][1]), 2) + pow((filterlines[j][2] - filterlines[j][0]), 2));
+					float angj = atan(kj);
+					//cout << "angj::" << angj * 180 / pi << endl;
+
+					if (abs(atan(ki) - angj) < pi /4) {
+						d_i += d_j;
+						angi = angi * (1 - d_j / d_i) + angj * d_j / d_i;
+					}
+					else
+					{
+						if (d_i > 15) {
+							//k_list.push_back(std::make_pair(d_i, angi));
+							std::pair<float, float> ppair = std::make_pair(d_i, angi);
+							if (k_list.size() == 0)
+								k_list.push_back(ppair);
+							else {
+								if (abs(ppair.second - (*(k_list.end() - 1)).second) < pi / 6)
+								{
+									(*(k_list.end() - 1)).first += ppair.first;
+									(*(k_list.end() - 1)).second = (1 - ppair.first) / (*(k_list.end() - 1)).first*(*(k_list.end() - 1)).second + ppair.first / (*(k_list.end() - 1)).first*ppair.second;
+								}
+								else
+								{
+									k_list.emplace_back(ppair);
+								}
+
+							}
+						}
+						if (j == filterlines.size() - 1) {
+							k_list.push_back(std::make_pair(d_j, angj));
+						}
+						i += j;
+						break;
+					}
+					if (j == filterlines.size() - 1) {
+						k_list.push_back(std::make_pair(d_i, angi));
+						i = j;
+					}
+				}
+
 			}
 		}
-		else if (dowmmax < max(filterlines[i][1], filterlines[i][3]))
-		{
-
-			dowmmax = max(filterlines[i][1], filterlines[i][3]);
-			downmaxindex = i;
-
-		}
-		min_l = min(filterlines[i][0], filterlines[i][2]);
-		max_r = max(filterlines[i][0], filterlines[i][2]);
-	}
-	if (downmaxindex == -1) {
-		if (orie == 1)
-			ang = pi / 2;
-		else if (orie == 2)
-			ang = -1 * pi / 2;
 		else
-			ang = 0;
-		return;
-	}
-	float initK = (-filterlines[downmaxindex][2] + filterlines[downmaxindex][0]) / (filterlines[downmaxindex][3] - filterlines[downmaxindex][1] + _T);
-	float init_angle = atan(initK);
-	float len = sqrtf(pow((filterlines[downmaxindex][3] - filterlines[downmaxindex][1]), 2) + pow((filterlines[downmaxindex][2] - filterlines[downmaxindex][0]), 2));
-	ang = init_angle;
-
-	for (int i = downmaxindex + 1; i < filterlines.size(); i++) {
-
-		if (max(filterlines[i][1], filterlines[i][3]) == max(filterlines[downmaxindex][1], filterlines[downmaxindex][3]))
-			continue;
-		float K = (-filterlines[i][2] + filterlines[i][0]) / (filterlines[i][3] - filterlines[i][1] + _T);
-		float angle_i = atan(K);
-		float d_i = sqrtf(pow((filterlines[i][3] - filterlines[i][1]), 2) + pow((filterlines[i][2] - filterlines[i][0]), 2));
-		if (abs(angle_i - init_angle) > pi / 6)
-			continue;
-		else {
-			len += d_i;
-			ang = ang * (1 - d_i / len) + angle_i * d_i / len;
+		{
+			float ki = (-filterlines[0][2] + filterlines[0][0]) / (filterlines[0][3] - filterlines[0][1] + _T);
+			float d_i = sqrtf(pow((filterlines[0][3] - filterlines[0][1]), 2) + pow((filterlines[0][2] - filterlines[0][0]), 2));
+			k_list.push_back(std::make_pair(d_i, atan(ki)));
 		}
-		if (min(filterlines[i][0], filterlines[i][2]) == min_l)
-			break;
+		int maxlen = _Min;
+		if (orie == 2)
+		{
+			cout << "::" << k_list.size() << endl;
+			for (int s = 0; s < k_list.size(); s++) {
+				if (k_list[s].second <- pi /6) {
+					if (k_list[s].first > maxlen) {
+						maxlen = k_list[s].first;
+						ang = k_list[s].second;
+					}
+				}
 
-		if (max(filterlines[i][0], filterlines[i][2]) == max_r)
-			break;
-
-	}
-	if (downmaxindex >= 1)
-		return;
-	for (int i = downmaxindex - 1; i >= 0; i--) {
-
-		if (max(filterlines[i][1], filterlines[i][3]) == max(filterlines[downmaxindex][1], filterlines[downmaxindex][3]))
-			continue;
-		float K = (-filterlines[i][2] + filterlines[i][0]) / (filterlines[i][3] - filterlines[i][1] + _T);
-		float angle_i = atan(K);
-		float d_i = sqrtf(pow((filterlines[i][3] - filterlines[i][1]), 2) + pow((filterlines[i][2] - filterlines[i][0]), 2));
-		if (abs(angle_i - init_angle) > pi / 6)
-			continue;
-		else {
-			len += d_i;
-			ang = ang * (1 - d_i / len) + angle_i * d_i / len;
+			}
 		}
-		if (min(filterlines[i][0], filterlines[i][2]) == min_l)
-			break;
+		else if (orie ==1)
+		{
+			for (int s = 0; s < k_list.size(); s++) {
+				if (k_list[s].second > pi /6) {
+					if (k_list[s].first > maxlen) {
+						maxlen = k_list[s].first;
+						ang = k_list[s].second;
+					}
+				}
 
-		if (max(filterlines[i][0], filterlines[i][2]) == max_r)
-			break;
+			}
+		}
+		else {
+			for (int s = 0; s < k_list.size(); s++) {
+				if (abs(k_list[s].second) < pi / 4) {
+					if (k_list[s].first > maxlen) {
+						maxlen = k_list[s].first;
+						ang = k_list[s].second;
+					}
+				}
 
+			}
+		}
 	}
+	
 }
 
 int caldownlocal(cv::Mat src,cv::Rect boundrect) {
@@ -781,6 +993,35 @@ void wrap(Mat &src, Mat &dst) {
 
 }
 
+void Isside(Mat src, int& inside) {
+	Mat dst, wrap_img, src_wrap_img;
+
+	int width = src.cols;
+	int height = src.rows;
+
+	width = int(width / 2);
+	height = int(height / 2);
+	resize(src, src, Size(width, height));
+	cv::cvtColor(src, dst, COLOR_BGR2GRAY);
+	cv::threshold(dst, dst, 20, 255, THRESH_BINARY);//gray 70
+
+	wrap(dst, wrap_img);
+
+	//erode(dst, dst, structureElement, Point(-1, -1), 1);
+	//morphologyEx(dst, dst, MORPH_OPEN, structureElement);
+	cv::Rect froi = cv::Rect(_Leftwheel_topoutside, 0, _Rightwheel_topoutside - _Leftwheel_topoutside, height);
+	cv::Mat fcrop = wrap_img(froi);
+
+	double area_ratio = cv::sum(fcrop / 255)[0] / (fcrop.cols*fcrop.rows);
+
+	if (area_ratio > 0.95)
+		inside = 0;
+	else if (area_ratio < 0.1)
+		inside = 2;
+	else
+		inside = 1;
+}
+
 double convert2realdistance(int d)
 {
 	int c = static_cast<int>(d / 30);
@@ -815,19 +1056,20 @@ double convert2realdistance(int d)
 	default:
 		break;
 	}
-	real_distance = up- (up - lower)*(d - c * 30) / 30.0;
+	real_distance = up - (up - lower)*(d - c * 30) / 30.0;
 
 	return real_distance;
 }
 
 void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 {
-	Mat dst,wrap_img;
+	Mat dst,wrap_img, src_wrap_img;
 
 	int width = src.cols;
 	int height = src.rows;
 	int orie = 0;
 	float ang = 0;
+	int noside = 0;
 	width = int(width / 2);
 	height = int(height / 2);
 	resize(src, src, Size(width, height));
@@ -840,7 +1082,7 @@ void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 	dilate(dst, dst, structureElement, Point(-1, -1), 1);
 	
 	wrap(dst, wrap_img);
-	//wrap(src, src_wrap_img);
+	wrap(src, src_wrap_img);
 	//erode(dst, dst, structureElement, Point(-1, -1), 1);
 	//morphologyEx(dst, dst, MORPH_OPEN, structureElement);
 	cv::Mat fcrop;
@@ -880,91 +1122,664 @@ void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 	}
 	else
 	{
+		
 		info.data.distance = convert2realdistance(boundRect.y + boundRect.height);
 		if (info.data.distance ==0 && cv::sum(fcrop(cv::Rect(0, height - 1, _Rightwheel_topoutside - _Leftwheel_topoutside, 1)) / 255)[0] > 0)
 		{
 			info.data.distance = 1;
 		}
 		info.data.orientation = caldownlocal(fcrop, boundRect);
-		if (boundRect.br().x < width / 2)
+		if (boundRect.br().x < fcrop.cols / 2)
 			orie = 1;
-		else if (boundRect.tl().x > width / 2)
+		else if (boundRect.tl().x > fcrop.cols / 2)
 			orie = 2;
 		else {
 			orie = info.data.orientation;
 		}
 
 
-		if (boundRect.x > width / 3 && boundRect.x + boundRect.width < width * 2 / 3)
+		if (boundRect.x > fcrop.cols / 3 && boundRect.x + boundRect.width < fcrop.cols * 2 / 3)
 		{
 			if (orie == 1)
-				info.data.angle = pi / 2;
+				info.data.angle = 0;// pi / 2;
 			else if (orie == 2)
-				info.data.angle = pi / -2;
+				info.data.angle = pi;// pi / -2;
 		}
 		else {
-			extractSide(fcrop, sideground, contour, 0);
+			extractSide(fcrop, sideground, contour, 0, noside);
 			findLines(sideground, filterlines);
-			caledgeang(filterlines, ang, 1, 0);
+			caledgeang(filterlines, ang, 1, orie);
 			if (orie == 0)
-				info.data.angle = pi;
+				info.data.angle = 0;
+			else {
+				//info.data.angle = ang;
+				if (ang > 0)
+					info.data.angle = pi - ang;
+				else if (ang < 0)
+					info.data.angle = abs(ang);
+				else
+					info.data.angle = 0;
+			}
+
+		}
+	}
+	/*rectangle(src_wrap_img(froi), Point(boundRect.x, boundRect.y), Point(boundRect.x + boundRect.width, boundRect.y + boundRect.height), Scalar(255, 0, 0), 2, 8);
+	cv::imshow("t", src_wrap_img);
+	cv::waitKey(0);*/
+}
+int comparemidside(cv::Rect backRect[], vector<Point> contour[], vector<cv::Mat>crop, int noside[], int siderows, int sidecols)
+{
+	int orei = 0;
+
+
+	int sl = cv::sum(crop[2] / 255)[0];
+	int sr = cv::sum(crop[1] / 255)[0];
+
+	if (contour[1].size() != 0 && backRect[1].x <= 5 && !(noside[1] == 1 && backRect[1].y > 5))
+	{
+		if (sr >= sl)
+			orei = 1;
+		else if (contour[2].size() != 0 && backRect[2].br().x >= sidecols - 5 && !(noside[2] == 1 && backRect[2].y > 5))
+			orei = 2;
+
+	}
+	else {
+		if (sl >= sr && contour[2].size() != 0 && backRect[2].br().x >= sidecols - 5 && !(noside[2] == 1 && backRect[2].y > 5))
+			orei = 2;
+	}
+
+	return orei;
+}
+int computesidetype(vector<Point> contour, cv::Mat side_img, int sidenum)
+{
+	int rows = side_img.rows;
+	int cols = side_img.cols;
+	cv::Point left(_Max, _Min), top(_Max, _Min), down(_Max, _Min), right(_Max, _Min);
+	int  leftflag = 0, topflag = 0, downflag = 0, rightflag = 0;
+
+	double	base_k = 1.0* side_img.rows / (side_img.cols - 15);
+	double	base_k2 = 1.0* side_img.rows / (side_img.cols - 25);
+
+	if (sidenum == 1) {
+
+		for (int i = 0; i < contour.size(); i++) {
+			if (contour[i].x < 5 && contour[i].y>5 && contour[i].y < rows - 5)
+			{
+				left.x = min(left.x, contour[i].y);
+				left.y = max(left.y, contour[i].y);
+				leftflag = 1;
+			}
+
+			if (contour[i].x > 5 && contour[i].x < cols - 5 && contour[i].y < 5)
+			{
+				top.x = min(top.x, contour[i].x);
+				top.y = max(top.y, contour[i].x);
+				topflag = 1;
+			}
+
+			if (contour[i].x > 5 && contour[i].x < 10 && contour[i].y > rows - 5)
+			{
+				down.x = min(down.x, contour[i].x);
+				down.y = max(down.y, contour[i].x);
+				downflag = 1;
+			}
+
+			if (contour[i].x > 10 && contour[i].y > 5 && contour[i].y < rows - 5)
+			{
+
+				double k = (rows - contour[i].y) / (contour[i].x - 15 + _T);
+				if (k >= base_k && k <= base_k2)
+				{
+					right.x = min(right.x, contour[i].y);
+					right.y = max(right.y, contour[i].y);
+				}
+				rightflag = 1;
+			}
+		}
+
+		/*if ((topflag == 1 && downflag == 1)
+			|| (topflag == 1 && rightflag == 1)
+			|| (rightflag == 1 && downflag == 1)
+			)
+			return 1;
+		else
+			return 0;*/
+		cout << "cc:" << top.y - top.x << "::" << topflag << endl;
+		cout << "cc2:" << left.y - left.x << "::" << leftflag << endl;
+		if ((top.y - top.x > 20)
+			|| (left.y - left.x > 30))
+			return 0;
+		else
+			return 1;
+
+
+	}
+	else {
+
+		for (int i = 0; i < contour.size(); i++) {
+			if (contour[i].x > cols - 5 && contour[i].y > 5 && contour[i].y < rows - 5)
+			{
+				right.x = min(right.x, contour[i].y);
+				right.y = max(right.y, contour[i].y);
+				rightflag = 1;
+			}
+
+			if (contour[i].x > 5 && contour[i].x < cols - 5 && contour[i].y < 5)
+			{
+				top.x = min(top.x, contour[i].x);
+				top.y = max(top.y, contour[i].x);
+				topflag = 1;
+			}
+
+			if (contour[i].x > 5 && contour[i].x < 10 && contour[i].y > rows - 5)
+			{
+				down.x = min(down.x, contour[i].x);
+				down.y = max(down.y, contour[i].x);
+				downflag = 1;
+			}
+
+			if (contour[i].x < cols - 10 && contour[i].y > 5 && contour[i].y < rows - 5)
+			{
+
+				double k = (rows - contour[i].y) / (cols - contour[i].x - 14 + _T);
+				if (k >= base_k && k <= base_k2)
+				{
+					left.x = min(left.x, contour[i].y);
+					left.y = max(left.y, contour[i].y);
+				}
+				leftflag = 1;
+			}
+		}
+
+		/*if ((topflag == 1 && downflag == 1)
+			|| (topflag == 1 && leftflag == 1)
+			|| (leftflag == 1 && downflag == 1)
+			)
+			return 1;
+		else
+			return 0;*/
+
+		if ((top.y - top.x > 20)
+			|| (right.y - right.x > 30))
+			return 0;
+		else
+			return 1;
+
+
+	}
+
+
+
+}
+void CaledgeInfo(Mat &src, int &isside, float &lastang, int &distance,int& inside,int side_advise)
+{
+	Mat dst, wrap_img, src_wrap_img;
+	float ang[3] = { 0 };
+	int noside[3] = { 0 };
+
+	int orie = 0;
+	int width = src.cols;
+	int height = src.rows;
+	/*int turnline = static_cast<int>(height * 2 / 3);
+	int topline = static_cast<int>(height / 6);
+	int downline = static_cast<int>(height * 5 / 6);*/
+
+	width = int(width / 2);
+	height = int(height / 2);
+	resize(src, src, Size(width, height));
+	cv::cvtColor(src, dst, COLOR_BGR2GRAY);
+	cv::threshold(dst, dst, 20, 255, THRESH_BINARY);//gray 70
+
+	//adaptiveThreshold(dst, dst, 255, ADAPTIVE_THRESH_MEAN_C, THRESH_BINARY, 11, -2);
+	int s = 5;
+	Mat structureElement = getStructuringElement(MORPH_RECT, Size(s, s), Point(-1, -1));
+	dilate(dst, dst, structureElement, Point(-1, -1), 1);
+	wrap(dst, wrap_img);
+	wrap(src, src_wrap_img);
+
+	//erode(dst, dst, structureElement, Point(-1, -1), 1);
+	//morphologyEx(dst, dst, MORPH_OPEN, structureElement);
+	cv::Mat fcrop, rcrop, lcrop;
+	cv::Rect froi, lroi, rroi, lwheelroi, rwheelroi;
+	froi = cv::Rect(_Leftwheel_topoutside, 0, _Rightwheel_topoutside - _Leftwheel_topoutside, height);
+	lroi = cv::Rect(0, 0, _Leftwheel_topoutside - 1, height);
+	rroi = cv::Rect(_Rightwheel_topoutside, 0, width - _Rightwheel_topoutside, height);
+
+	vector<cv::Rect>roi = { froi,rroi,lroi };
+
+	vector<vector<Point>> contours[3];
+	vector<Vec4i> filterlines[3];
+	Mat labelground = Mat::zeros(dst.size(), CV_8UC1);
+	Mat fsideground = Mat::zeros(cv::Size(froi.width, froi.height), CV_8UC1);
+	Mat rsideground = Mat::zeros(cv::Size(rroi.width, rroi.height), CV_8UC1);
+	Mat lsideground = Mat::zeros(cv::Size(lroi.width, lroi.height), CV_8UC1);
+	vector<cv::Mat>sideground = { fsideground,rsideground,lsideground };
+
+	extractBackGround(wrap_img, labelground);
+
+	fcrop = labelground(froi);
+	rcrop = labelground(rroi);
+	lcrop = labelground(lroi);
+
+	double area_ratio = cv::sum(fcrop / 255)[0] / (fcrop.cols*fcrop.rows);
+
+	if (area_ratio > 0.95)
+		inside = 0;
+	else if (area_ratio < 0.1)
+		inside = 2;
+	else
+		inside = 1;
+
+	vector<cv::Mat>crop = { fcrop,rcrop,lcrop };
+	int downbox[3] = { -1,-1,-1 };//0:f 1:r 2:l
+	vector<Point> contour[3];
+
+	cv::Rect boundRect[3];
+
+	for (int k = 0; k < 3; k++) {
+		extractbox(crop[k], contours[k], downbox[k], k);
+		if (contours[k].size() == 0 || downbox[k] == -1)
+			continue;
+
+		contour[k] = contours[k][downbox[k]];
+		boundRect[k] = boundingRect(Mat(contour[k]));
+		extractSide(crop[k], sideground[k], contour[k], k, noside[k]);
+
+	}
+
+	//follow edge
+	//cv::imwrite("l.jpg", wrap_img);
+	int rroi_nograssarea = 0, lroi_nograssarea = 0;
+	if (contour[0].size() != 0 || contour[1].size() != 0 || contour[2].size() != 0)
+	{
+
+		if (contour[0].size() == 0 || boundRect[0].area() < labelground.cols || boundRect[0].br().y <= height / 2) {
+
+			int sidetype1 = 1, sidetype2 = 1;   // 1 grass 2 noside or norotation 3 side
+
+			if (contour[1].size() > 10) {
+				
+				int right_linenograsssum =3* int(boundRect[0].height / 2) - cv::sum(crop[1](cv::Rect(0, boundRect[1].y,3,int(boundRect[1].height /2))) / 255)[0];
+				
+				if (noside[1] == 1 || boundRect[1].br().y < crop[1].rows / 2 || (boundRect[1].y>crop[1].rows / 10 && contour[0].size() == 0) || right_linenograsssum>50) {
+
+					sidetype1 = 2;
+				}
+				else
+				{
+					sidetype1 = 3;
+
+				}
+
+			}
+
+			if (contour[2].size() > 10) {
+				int left_linenograsssum = 3 * int(boundRect[2].height / 2) - cv::sum(crop[2](cv::Rect(crop[2].cols-3, boundRect[2].y, 3, int(boundRect[2].height / 2))) / 255)[0];
+				
+				if (noside[2] == 1 || boundRect[2].br().y < crop[2].rows / 2 || (boundRect[1].y>crop[2].rows / 10 && contour[0].size() == 0) || left_linenograsssum > 50) {
+
+					sidetype2 = 2;
+				}
+				else
+				{
+					sidetype2 = 3;
+
+				}
+
+			}
+
+			int choose = sidetype2 + sidetype1 * 10;
+			int need_compute_lineangel = 0;
+			switch (choose)
+			{
+			case 11:
+				isside = -1;
+				lastang = 0;
+
+				break;
+			case 12:
+				isside = 2;
+				lastang = 0;
+				break;
+			case 13:
+				isside = 2;
+
+				need_compute_lineangel = computesidetype(contour[2], crop[2], 2);
+
+				break;
+			case 21:
+			case 22:
+			case 23:
+				isside = 1;
+				lastang = 0;
+				break;
+			case 31:
+			case 32:
+			case 33:
+				if (side_advise == 0) {
+					rroi_nograssarea = rroi.width*rroi.height - cv::sum(dst(rroi) / 255)[0];
+
+					lroi_nograssarea = lroi.width*lroi.height - cv::sum(dst(lroi) / 255)[0];
+
+					if (rroi_nograssarea > rroi.width * 5) {
+						isside = 1;
+						need_compute_lineangel = computesidetype(contour[1], crop[1], 1);
+					}
+					else if (lroi_nograssarea > lroi.width * 5 && sidetype2 == 3)
+					{
+						isside = 2;
+						need_compute_lineangel = computesidetype(contour[2], crop[2], 2);
+					}
+					else
+					{
+						isside = -1;
+						need_compute_lineangel = 0;
+					}
+				}
+				else
+				{
+					isside = side_advise;
+					need_compute_lineangel = computesidetype(contour[side_advise], crop[side_advise], side_advise);
+				}
+
+				break;
+			default:
+				break;
+			}
+
+			if (need_compute_lineangel) {
+				findLines(sideground[isside], filterlines[isside]);
+				if (filterlines[isside].size() != 0) {
+					if (contour[0].size() != 0 && boundRect[0].br().y>height/3)
+						if (isside == 1)
+							orie = 2;
+						else if (isside == 2)
+							orie = 1;
+					caledgeang(filterlines[isside], ang[isside], 0, orie);
+					lastang = ang[isside];
+				}
+				else
+					lastang = 0;
+			}
 			else
-				info.data.angle = ang;
+				lastang = 0;
+
+
+			//cout << "choose::" << choose << endl;
+			//cout << "need_compute_lineangel::" << need_compute_lineangel << endl;
+
+
+		}
+		else {
+
+			/*orie = comparemidside(boundRect,contour, crop,noside, height, int(width * 3 / 14));
+			findLines(sideground[0], filterlines[0]);
+			caledgeang(filterlines[0], ang[0], 1, orie);
+			cout << "mid orie::" << orie << endl;
+			if (orie == 0)
+				lastang = pi;
+			else
+				lastang = ang[0];*/
+			isside = 0;
+
+			if (boundRect[0].br().y >= height - 5) {
+				vector<vector<Point>> allcontours;
+				vector<Point> allcontour;
+				int index = 0;
+
+				extractbox(labelground, allcontours, index, 1);
+				if (allcontours.size() == 0|| boundRect[0].height<height/3) {
+					lastang = pi;
+
+				}
+				else {
+					allcontour = allcontours[index];
+					cv::Moments moment;
+					cv::Mat temp(allcontour);
+					moment = moments(temp, false);
+					cv::Point pt;
+					if (moment.m00 != 0)
+					{
+
+						pt.x = cvRound(moment.m10 / moment.m00);
+						pt.y = cvRound(moment.m01 / moment.m00);
+						circle(src, pt, 5, Scalar(255, 0, 0), -1);
+						float k = (-pt.x + width / 2) / (pt.y - height);
+
+						lastang = atan(k);
+
+					}
+					else {
+						lastang = pi;
+					}
+				}
+				//	cout << "out side!!!" << endl;
+			}
+			/*else if (boundRect[0].br().y >= height * 2 / 3)
+			{
+				lastang = pi;
+
+			}
+			else if (boundRect[0].br().y >= height / 2) {*/
+			else {
+
+				distance = height - boundRect[0].y - boundRect[0].height;
+				if (boundRect[0].br().x <= crop[0].cols / 2) {
+					cout << width / 2 << endl;
+					orie = 1;
+				}
+				else if (boundRect[0].tl().x > crop[0].cols / 2)
+					orie = 2;
+				else {
+					
+					orie = comparemidside(boundRect, contour, crop, noside, height, int(width * 3 / 14));
+				}
+				if (boundRect[0].x > fcrop.cols / 3 && boundRect[0].x + boundRect[0].width < fcrop.cols * 2 / 3)
+				{
+					if (orie == 1)
+						lastang = pi / 2;
+					else if (orie == 2)
+						lastang = pi / -2;
+
+				}
+				else {
+					findLines(sideground[0], filterlines[0]);
+					caledgeang(filterlines[0], ang[0], 1, orie);
+					if (orie == 0) {
+						lastang = pi;
+
+					}
+					else {
+						lastang = ang[0];
+
+					}
+				}
+
+			}
+
+		}
+
+	}
+	else
+	{
+		lastang = pi;
+		isside = -1;
+
+	}
+
+
+
+	for (int k = 0; k < 3; k++)
+	{
+		rectangle(src_wrap_img(roi[k]), Point(boundRect[k].x, boundRect[k].y), Point(boundRect[k].x + boundRect[k].width, boundRect[k].y + boundRect[k].height), Scalar(255, 0, 0), 2, 8);
+		for (size_t i = 0; i < filterlines[k].size(); i++)
+		{
+			//cout << filterlines[k].size() << endl;
+			Vec4i points = filterlines[k][i];
+
+			//line(src(roi[k]), Point(points[0], points[1]), Point(points[2],points[3]), Scalar(0,0,255-i*int(255/filterlines[k].size())), 2, CV_AA);	
+			line(src_wrap_img(roi[k]), Point(points[0], points[1]), Point(points[2], points[3]), Scalar(0,0, 255 - i * int(200 / filterlines[k].size())), 2, CV_AA);
 		}
 	}
 
-	cout << "detect_boundary.distance:" << info.data.distance << endl;
-	cout << "detect_boundary.orientation:" << info.data.orientation << endl;
-	cout << "detect_boundary.angle:" << info.data.angle << endl;
-	cv::imshow("test", wrap_img);
+	////cout << "ang::" << lastang * 180 / pi << endl;
+	cv::imshow("t", src_wrap_img);
+	//////float tt = lastang * 180 / pi;
+	//////string name = "31out/3_" + to_string(num) + "_" + to_string(tt) + ".jpg";
+	//////cv::imwrite(name,src_wrap_img );
 	cv::waitKey(0);
+
 }
-
-
-
-void compute_info(Mat src,Vision_detect_boundary &detect_boundary) {
-
-	
-	
-			
-	//检测是否加成功
-	if (!src.data)  
-	{
-		//cout << "Could not open or find the image" << endl;
-		return;
-	}
-		
-		
-
-	CalboundaryInfo(src, detect_boundary);
-	
-
-		
-	
-	
-}
-int main(int argc,char *argv[])
+void follow_edge()
 {
+	float ang = 0;
+	int isside = -1;
+	int distance = 0;
+	int inside = 0;
+	float ratio = 0.2;
+
+	Vision_edge_extraction edge_extraction;
+	string zmqip = "tcp://127.0.0.1:10007";
+	zmq::context_t ctx{ 1 };
+
+	zmq::socket_t publisher(ctx, zmq::socket_type::pub);
+	publisher.bind(zmqip);
+
+	Mat src;
+	string f = "31/";
+
+	//加载图片
+	for (int i =246; i <=2000; i = i + 1) {
+
+		//string p = f + to_string(i) + ".jpg";
+		//string p2 = f + to_string(i-1) + ".jpg";
+		
+		string p = f + "3_" + to_string(i) + ".png-out.jpg";
+		cout << p << endl;
+		src = imread(p, 1);
+
+		//检测是否加成功
+		if (!src.data)
+		{
+			//cout << "Could not open or find the image" << endl;
+			continue;
+		}
+
+		cv::resize(src, src, cv::Size(640, 360));
+		CaledgeInfo(src, isside, ang, distance,inside, state.side_advise);
+
+		//cout << "isside:" << isside << endl;
+		//cout << "ang1::" << ang * 180 / pi << endl;
+		if (isside != -1 && isside == state.lastside) {
+
+			if (isside != 0)
+			{
+				//cout << " state.lastang" << state.lastang << endl;
+				ang = state.lastang*0.8 + ang * 0.2;
+
+			}
+			else
+			{
+				if (ang <= -pi/4)
+					state.side_advise = 1;
+				else if (ang >= pi / 4)
+					state.side_advise = 2;
+			}
+			state.lastang = ang;
+			state.lastside = isside;
+
+		}
+		else
+		{
+			if (isside == -1)
+			{
+
+				state.nosidecount++;
+				if (state.nosidecount < 5) {
+					ang = 0;
+					state.lastang = ang;
+				}
+				if (state.nosidecount < 8 && state.nosidecount >= 5)
+				{
+
+					if (state.lastside == 0)
+						ang = pi;
+					else if (state.lastside == 1)
+						ang = pi / 6;
+					else if (state.lastside == 2)
+						ang = -1 * pi / 6;
+				}
+				else if (state.nosidecount >= 8) {
+					
+					state.lastang = 0;
+					state.lastside = isside;
+				}
+			}
+			else {
+				state.nosidecount = 0;
+				state.lastang = ang;
+				state.lastside = isside;
+			}
+
+
+		}
+		edge_extraction.data.angle = ang;
+		edge_extraction.data.isside = inside;
+		if (isside != 0)
+			edge_extraction.data.distance =0 ;
+		else
+			edge_extraction.data.distance = convert2realdistance(180- distance);
+		zmq::message_t message;
+		string topic = "edge_extraction";
+
+		zmq::message_t message_topic(topic.data(), topic.size());
+
+		publisher.send(message_topic, zmq::send_flags::sndmore);
+
+		zmq::message_t message_buffer(sizeof(edge_extraction.buffer));
+
+		memcpy(message_buffer.data(), edge_extraction.buffer, sizeof(edge_extraction.buffer));
+
+		publisher.send(message_buffer, zmq::send_flags::none);
+		//cout << "ang2:::" << ang * 180 / pi << endl;
+		//Mat src2 = imread(p2, CV_LOAD_IMAGE_COLOR);
+		//imshow("src2",src2);
+		//cv::waitKey(0);
+	}
+}
+
+void compute_edgeinfo() {
+
+	
 	
 	Vision_detect_boundary detect_boundary;
-	Vision_edge_extraction edge_extraction;
-	string zmqip = "tcp://127.0.0.1:10005";
+	
+	string zmqip = "tcp://127.0.0.1:10006";
 	zmq::context_t ctx{ 1 };
 
 	zmq::socket_t publisher(ctx, zmq::socket_type::pub);
 	publisher.bind(zmqip);
 	Mat src;
 
-	string f = "undistort/";
+	string f ="undistort/";
 
 	//加载图片
-	for (int i = 1; i <= 300; i = i + 2) {
+	for (int i = 658; i <= 1000; i = i + 2) {
 
 		string p = f + to_string(i) + ".jpg";
+		
+		src = imread(p, 1);
 
-		src = imread(p, CV_LOAD_IMAGE_COLOR);
+		//检测是否加成功
+		if (!src.data)
+		{
+			//cout << "Could not open or find the image" << endl;
+			return;
+		}
 
-		compute_info(src, detect_boundary);
+		
+
+		CalboundaryInfo(src, detect_boundary);
 
 		zmq::message_t message;
 		string topic = "detect_boundary";
@@ -979,6 +1794,14 @@ int main(int argc,char *argv[])
 
 		publisher.send(message_buffer, zmq::send_flags::none);
 	}
+						
+	
+}
+int main(int argc,char *argv[])
+{
+	
+	follow_edge();  //follow edge
+	//compute_edgeinfo();//random cut
 	return 0;
 }
 
