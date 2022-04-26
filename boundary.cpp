@@ -32,7 +32,7 @@ union Vision_edge_extraction
 	struct {
 		double angle;
 		double distance;
-		int isside; //0 all grass ,1 side ,2 no grass
+		int isside; //0 all grass ,1 r side ,2 left,3 no grass 
 	}data;
 	char buffer[sizeof(data)];
 };
@@ -710,7 +710,7 @@ void caledgeang(vector<Vec4i> &filterlines, float &ang, int mode, int orie) {
 	int dowmmax = _Min;
 	//1 follow edge 0:random
 	int min_l = 0, max_r = 0,max_d=0,min_t=0;
-	cout << orie << endl;
+	//cout << orie << endl;
 	if (mode) {
 		vector<Vec4i>::iterator p;
 		for (p = filterlines.begin(); p != filterlines.end();)
@@ -897,7 +897,7 @@ void caledgeang(vector<Vec4i> &filterlines, float &ang, int mode, int orie) {
 		int maxlen = _Min;
 		if (orie == 2)
 		{
-			cout << "::" << k_list.size() << endl;
+			//cout << "::" << k_list.size() << endl;
 			for (int s = 0; s < k_list.size(); s++) {
 				if (k_list[s].second <- pi /6) {
 					if (k_list[s].first > maxlen) {
@@ -1082,7 +1082,7 @@ void CalboundaryInfo(Mat &src, Vision_detect_boundary &info)
 	dilate(dst, dst, structureElement, Point(-1, -1), 1);
 	
 	wrap(dst, wrap_img);
-	wrap(src, src_wrap_img);
+	//wrap(src, src_wrap_img);
 	//erode(dst, dst, structureElement, Point(-1, -1), 1);
 	//morphologyEx(dst, dst, MORPH_OPEN, structureElement);
 	cv::Mat fcrop;
@@ -1244,8 +1244,8 @@ int computesidetype(vector<Point> contour, cv::Mat side_img, int sidenum)
 			return 1;
 		else
 			return 0;*/
-		cout << "cc:" << top.y - top.x << "::" << topflag << endl;
-		cout << "cc2:" << left.y - left.x << "::" << leftflag << endl;
+		//cout << "cc:" << top.y - top.x << "::" << topflag << endl;
+		//cout << "cc2:" << left.y - left.x << "::" << leftflag << endl;
 		if ((top.y - top.x > 20)
 			|| (left.y - left.x > 30))
 			return 0;
@@ -1335,7 +1335,7 @@ void CaledgeInfo(Mat &src, int &isside, float &lastang, int &distance,int& insid
 	Mat structureElement = getStructuringElement(MORPH_RECT, Size(s, s), Point(-1, -1));
 	dilate(dst, dst, structureElement, Point(-1, -1), 1);
 	wrap(dst, wrap_img);
-	wrap(src, src_wrap_img);
+	//wrap(src, src_wrap_img);
 
 	//erode(dst, dst, structureElement, Point(-1, -1), 1);
 	//morphologyEx(dst, dst, MORPH_OPEN, structureElement);
@@ -1361,14 +1361,7 @@ void CaledgeInfo(Mat &src, int &isside, float &lastang, int &distance,int& insid
 	rcrop = labelground(rroi);
 	lcrop = labelground(lroi);
 
-	double area_ratio = cv::sum(fcrop / 255)[0] / (fcrop.cols*fcrop.rows);
-
-	if (area_ratio > 0.95)
-		inside = 0;
-	else if (area_ratio < 0.1)
-		inside = 2;
-	else
-		inside = 1;
+	
 
 	vector<cv::Mat>crop = { fcrop,rcrop,lcrop };
 	int downbox[3] = { -1,-1,-1 };//0:f 1:r 2:l
@@ -1565,7 +1558,7 @@ void CaledgeInfo(Mat &src, int &isside, float &lastang, int &distance,int& insid
 
 				distance = height - boundRect[0].y - boundRect[0].height;
 				if (boundRect[0].br().x <= crop[0].cols / 2) {
-					cout << width / 2 << endl;
+					
 					orie = 1;
 				}
 				else if (boundRect[0].tl().x > crop[0].cols / 2)
@@ -1607,27 +1600,38 @@ void CaledgeInfo(Mat &src, int &isside, float &lastang, int &distance,int& insid
 
 	}
 
+	double area_ratio = cv::sum(fcrop / 255)[0] / (fcrop.cols*fcrop.rows);
 
-
-	for (int k = 0; k < 3; k++)
-	{
-		rectangle(src_wrap_img(roi[k]), Point(boundRect[k].x, boundRect[k].y), Point(boundRect[k].x + boundRect[k].width, boundRect[k].y + boundRect[k].height), Scalar(255, 0, 0), 2, 8);
-		for (size_t i = 0; i < filterlines[k].size(); i++)
-		{
-			//cout << filterlines[k].size() << endl;
-			Vec4i points = filterlines[k][i];
-
-			//line(src(roi[k]), Point(points[0], points[1]), Point(points[2],points[3]), Scalar(0,0,255-i*int(255/filterlines[k].size())), 2, CV_AA);	
-			line(src_wrap_img(roi[k]), Point(points[0], points[1]), Point(points[2], points[3]), Scalar(0,0, 255 - i * int(200 / filterlines[k].size())), 2, CV_AA);
-		}
+	if (area_ratio > 0.95)
+		inside = 0;
+	else if (area_ratio < 0.1)
+		inside = 3;
+	else {
+		if (isside > 0)
+			inside = isside;
+		else
+			inside = 0;
 	}
 
-	////cout << "ang::" << lastang * 180 / pi << endl;
-	cv::imshow("t", src_wrap_img);
-	//////float tt = lastang * 180 / pi;
-	//////string name = "31out/3_" + to_string(num) + "_" + to_string(tt) + ".jpg";
-	//////cv::imwrite(name,src_wrap_img );
-	cv::waitKey(0);
+	//for (int k = 0; k < 3; k++)
+	//{
+	//	rectangle(src_wrap_img(roi[k]), Point(boundRect[k].x, boundRect[k].y), Point(boundRect[k].x + boundRect[k].width, boundRect[k].y + boundRect[k].height), Scalar(255, 0, 0), 2, 8);
+	//	for (size_t i = 0; i < filterlines[k].size(); i++)
+	//	{
+	//		//cout << filterlines[k].size() << endl;
+	//		Vec4i points = filterlines[k][i];
+
+	//		//line(src(roi[k]), Point(points[0], points[1]), Point(points[2],points[3]), Scalar(0,0,255-i*int(255/filterlines[k].size())), 2, CV_AA);	
+	//		line(src_wrap_img(roi[k]), Point(points[0], points[1]), Point(points[2], points[3]), Scalar(0,0, 255 - i * int(200 / filterlines[k].size())), 2, CV_AA);
+	//	}
+	//}
+
+	//cout << "ang::" << lastang * 180 / pi << endl;
+	//cv::imshow("t", src_wrap_img);
+	////////float tt = lastang * 180 / pi;
+	////////string name = "31out/3_" + to_string(num) + "_" + to_string(tt) + ".jpg";
+	////////cv::imwrite(name,src_wrap_img );
+	//cv::waitKey(0);
 
 }
 void follow_edge()
@@ -1646,15 +1650,15 @@ void follow_edge()
 	publisher.bind(zmqip);
 
 	Mat src;
-	string f = "31/";
+	string f = "41/";
 
 	//加载图片
-	for (int i =246; i <=2000; i = i + 1) {
+	for (int i =1; i <=2000; i = i + 1) {
 
 		//string p = f + to_string(i) + ".jpg";
 		//string p2 = f + to_string(i-1) + ".jpg";
 		
-		string p = f + "3_" + to_string(i) + ".png-out.jpg";
+		string p = f + "4_" + to_string(i) + ".png-out.jpg";
 		cout << p << endl;
 		src = imread(p, 1);
 
