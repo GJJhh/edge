@@ -17,6 +17,15 @@ using namespace std;
 
 typedef unsigned char BYTE;
 #pragma pack(1)
+union Vision_mode
+{
+	struct
+	{
+		int mode;
+	}data;
+	char buffer[sizeof(data)];
+
+};
 union Vision_detect_boundary
 {
 	struct {
@@ -1803,10 +1812,26 @@ void compute_edgeinfo() {
 }
 int main(int argc,char *argv[])
 {
-	
-	follow_edge();  //follow edge
-	//compute_edgeinfo();//random cut
+	zmq::context_t ctx{ 1 };
+	zmq::socket_t sub(ctx, zmq::socket_type::sub);
+	sub.connect("tcp://127.0.0.1:10008");
+	sub.set(zmq::sockopt::subscribe, "vision_mode");
+	while (1) {
+
+		Vision_mode Mode;
+		zmq::message_t recv;
+		sub.recv(recv, zmq::recv_flags::none);
+		sub.recv(recv, zmq::recv_flags::none);
+		
+		std::memcpy(Mode.buffer, recv.data(), recv.size());
+		if (Mode.data.mode)
+			follow_edge();//follow edge
+		else
+			compute_edgeinfo();//random cut
+
+	}
 	return 0;
+
 }
 
 
