@@ -1619,7 +1619,12 @@ void CaledgeInfo(Mat &src, int &isside, float &lastang, int &distance,int& insid
 		if (isside > 0)
 			inside = isside;
 		else
-			inside = 0;
+		{
+			if (lastang >= 0)
+				inside = 2;
+			else
+				inside = 1;
+		}
 	}
 
 	//for (int k = 0; k < 3; k++)
