@@ -1741,6 +1741,14 @@ void follow_edge()
 
 
 		}
+		float len = src.rows / 4;
+		cv::Point end(0, 0);
+		end.x = src.cols / 2 + len * sin(ang);
+		end.y = src.rows / 2 - len * cos(ang);
+		
+		arrowedLine(src, Point(int(src.cols / 2), int(src.rows / 2)), end, Scalar(0, 0, 255), 2, 8, 0, 0.1);
+		cv::imshow("output", src);
+		cv::waitKey(0);
 		edge_extraction.data.angle = ang;
 		edge_extraction.data.isside = inside;
 		if (isside != 0)
